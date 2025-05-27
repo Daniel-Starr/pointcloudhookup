@@ -71,6 +71,4 @@ python PCgui.py
 
 欢迎提交 Issue 和 Pull Request，参与项目改进与交流。
 
----
 
-如果你需要更详细的介绍或其他部分说明，我可以帮你进一步完善。
