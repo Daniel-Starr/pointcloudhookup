@@ -1,6 +1,3 @@
-下面是根据你仓库 [https://github.com/Daniel-Starr/pointcloudhookup](https://github.com/Daniel-Starr/pointcloudhookup) 编写的示范 README.md 说明文档，你可以直接用或根据具体内容修改完善。
-
----
 
 ````markdown
 # pointcloudhookup
