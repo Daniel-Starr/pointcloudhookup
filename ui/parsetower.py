@@ -116,6 +116,13 @@ class GIMTower:
             for tower in self.arr:
                 s += f'{tower["name"]},{tower["type"]},{tower["lng"]},{tower["lat"]},{tower["h"]},{tower["r"]},{tower["properties"]["杆塔编号"]},{tower["properties"]["呼高"]},{tower["properties"]["杆塔高"]}\n'
             f.write(s)
+
+
     
     def length(self):
         return len(self.arr)
+
+
+# gim = GIMTower('../output_gim/平江电厂')
+# gim.parse()
+# gim.csv()

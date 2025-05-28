@@ -22,8 +22,16 @@ def create_bbox_lineset(x_min, x_max, y_min, y_max, z_min, z_max):
         box_points.append(corners[line[1]])
     return np.array(box_points)
 
+
+
 def extract_and_visualize_towers(las_path: str, parsed_text: str):
     tower_data = []
+    parsed_text = """=== 开始杆塔检测（候选簇：303个） ===
+    ✅ 杆塔8: 17.4m高 | 20.1m宽 | 中心坐标[4.37587898e+05 3.14069158e+06 1.31457350e+02]
+    ✅ 杆塔188: 29.8m高 | 10.2m宽 | 中心坐标[4.37787178e+05 3.14000696e+06 8.77722064e+01]
+    ✅ 杆塔199: 21.8m高 | 16.6m宽 | 中心坐标[4.37908948e+05 3.13960682e+06 8.00563301e+01]
+    ✅ 杆塔235: 21.0m高 | 13.0m宽 | 中心坐标[4.37676583e+05 3.14037950e+06 8.25588932e+01]"""
+
     pattern = r'✅ 杆塔(\d+): ([\d.]+)m高 \| ([\d.]+)m宽 \| 中心坐标\[(\d+\.?\d*e?[+-]?\d*) (\d+\.?\d*e?[+-]?\d*) (\d+\.?\d*e?[+-]?\d*)\]'
     for line in parsed_text.strip().split('\n'):
         match = re.match(pattern, line.strip())
