@@ -17,8 +17,8 @@ from ui.import_PC import run_voxel_downsampling
 from ui.extract import extract_and_visualize_towers
 from ui.vtk_widget import VTKPointCloudWidget
 from ui.compress import GIMExtractor
-from ui.parsetower import GIMTower
-from ui.review_panel import build_review_widget  # 新增导入
+from ui.parsetower import GIMTower, load_towers_from_gim_path  # ✅ 添加类导入
+from ui.review_panel import build_review_widget
 
 class ProgressSignal(QObject):
     update_progress = pyqtSignal(int)
@@ -45,6 +45,7 @@ class TowerDetectionTool(QMainWindow):
         self.downsampled_pcd = None
         self.tower_list = []
         self.gim_path = None
+        self.cbm_filenames = []  # ✅ 存储 CBM 文件名
 
     def init_ui(self):
         button_layout = QHBoxLayout()
@@ -164,8 +165,11 @@ class TowerDetectionTool(QMainWindow):
             extracted_path = extractor.extract_embedded_7z()
             self.signals.update_progress.emit(50)
             self.signals.append_log.emit(f"✅ 解压完成，输出目录: {extracted_path}")
-            parser = GIMTower(gim_file=extracted_path)
+
+            parser = GIMTower(extracted_path, log_callback=self.signals.append_log.emit)
             towers = parser.parse()
+            self.cbm_filenames = parser.get_cbm_filenames()  # ✅ 获取 CBM 文件名
+
             self.gim_path = extracted_path
             self.tower_list = towers
             self.signals.update_table.emit(towers)
