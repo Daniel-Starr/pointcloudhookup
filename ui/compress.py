@@ -48,9 +48,6 @@ class GIMExtractor:
         self.gim_header = None
 
     def extract_embedded_7z(self):
-
-
-
         gim_file = self.gim_file
         output_folder = self.output_folder
         filename = utils.get_filename(gim_file)
@@ -60,21 +57,17 @@ class GIMExtractor:
             self.gim_header = f.read(776)
             compressed_data = f.read()
 
-        temp_7z_path = os.path.join(output_folder, utils.generate_unique_filename())
         utils.ensure_folder_exists(output_folder)
+        final_output_folder = os.path.join(output_folder, filename)
+        os.makedirs(final_output_folder, exist_ok=True)
 
-        with open(temp_7z_path, 'wb') as temp_file:
-            temp_file.write(compressed_data)
-
-        with py7zr.SevenZipFile(temp_7z_path, mode='r') as archive:
-            final_output_folder = os.path.join(output_folder, filename)
+        # 使用 BytesIO 解压，不写入临时 .7z 文件
+        archive_file = BytesIO(compressed_data)
+        with py7zr.SevenZipFile(archive_file, mode='r') as archive:
             archive.extractall(path=final_output_folder)
 
-        os.remove(temp_7z_path)
         print(f"✅ 解压完成，输出目录：{final_output_folder}")
         return final_output_folder
-
-
 
     def has_7z_cli(self):
         return shutil.which("7z") is not None
@@ -112,23 +105,5 @@ class GIMExtractor:
         with open(output_file, 'wb') as outf:
             outf.write(header)
             outf.write(compressed_data)
-
-        def populate_file_tree(self, root_path):
-            """将指定路径的目录结构加载到左侧 TreeView"""
-            self.file_tree.delete(*self.file_tree.get_children())  # 清空原有内容
-
-            def insert_items(parent, path):
-                try:
-                    for name in os.listdir(path):
-                        full_path = os.path.join(path, name)
-                        is_dir = os.path.isdir(full_path)
-                        node = self.file_tree.insert(parent, 'end', text=name, open=False)
-                        if is_dir:
-                            insert_items(node, full_path)
-                except Exception as e:
-                    self.log(f"❌ 目录加载失败: {e}")
-
-            insert_items('', root_path)
-            self.log(f"📂 工程结构已加载：{root_path}")
 
         print(f"✅ 封装完成: {output_file}")

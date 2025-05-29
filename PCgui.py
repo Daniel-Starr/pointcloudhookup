@@ -1,5 +1,3 @@
-# 完整更新后的 PCgui.py
-
 import sys
 import os
 import threading
@@ -20,6 +18,7 @@ from ui.extract import extract_and_visualize_towers
 from ui.vtk_widget import VTKPointCloudWidget
 from ui.compress import GIMExtractor
 from ui.parsetower import GIMTower
+from ui.review_panel import build_review_widget  # 新增导入
 
 class ProgressSignal(QObject):
     update_progress = pyqtSignal(int)
@@ -71,15 +70,8 @@ class TowerDetectionTool(QMainWindow):
         self.right_stack = QStackedWidget()
         self.vtk_view = VTKPointCloudWidget()
         self.gim_table = QTableWidget()
-
-        self.review_text_left = QTextEdit()
-        self.review_text_left.setReadOnly(True)
-        self.review_text_right = QTextEdit()
         self.review_panel = QWidget()
-        review_layout = QHBoxLayout()
-        review_layout.addWidget(self.review_text_left)
-        review_layout.addWidget(self.review_text_right)
-        self.review_panel.setLayout(review_layout)
+        self.review_panel.setLayout(QHBoxLayout())
 
         self.right_stack.addWidget(self.vtk_view)
         self.right_stack.addWidget(self.gim_table)
@@ -215,7 +207,10 @@ class TowerDetectionTool(QMainWindow):
             QMessageBox.warning(self, "未导入点云", "请先导入并处理点云！")
             return
 
-        parsed_text = '\n'.join([f"✅ 杆塔{t.get('properties', {}).get('杆塔编号', t.get('name', f'塔杆{i+1}'))}: {t.get('properties', {}).get('杆塔高', '?')}m高 | {t.get('properties', {}).get('呼高', '?')}m宽 | 中心坐标[{t.get('lng', '?')} {t.get('lat', '?')} {t.get('h', '?')}]" for i, t in enumerate(self.tower_list)])
+        parsed_text = '\n'.join([
+            f"✅ 杆塔{t.get('properties', {}).get('杆塔编号', t.get('name', f'塔杆{i+1}'))}: {t.get('properties', {}).get('杆塔高', '?')}m高 | {t.get('properties', {}).get('呼高', '?')}m宽 | 中心坐标[{t.get('lng', '?')} {t.get('lat', '?')} {t.get('h', '?')}]"
+            for i, t in enumerate(self.tower_list)
+        ])
 
         try:
             full_pcd, tower_geometries = extract_and_visualize_towers(self.pointcloud_path, parsed_text)
@@ -227,39 +222,15 @@ class TowerDetectionTool(QMainWindow):
 
     def review_mode(self):
         self.push_view_history()
+        review_widget = build_review_widget(self.tower_list)
+        layout = self.review_panel.layout()
 
-        headers = ["杆塔编号", "呼高", "杆塔高", "经度", "纬度", "高度", "北方向偏角"]
-        rows = []
+        for i in reversed(range(layout.count())):
+            widget = layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
 
-        for t in self.tower_list:
-            props = t.get('properties', {})
-            row = [
-                str(props.get("杆塔编号", "")),
-                str(props.get("呼高", "")),
-                str(props.get("杆塔高", "")),
-                str(t.get("lng", "")),
-                str(t.get("lat", "")),
-                str(t.get("h", "")),
-                str(t.get("r", ""))
-            ]
-            rows.append(row)
-
-        col_widths = [len(h) for h in headers]
-        for row in rows:
-            for i, cell in enumerate(row):
-                col_widths[i] = max(col_widths[i], len(cell))
-
-        def format_row_centered(row_data):
-            return "  ".join(cell.center(col_widths[i]) for i, cell in enumerate(row_data))
-
-        lines = [format_row_centered(headers)]
-        lines += [format_row_centered(row) for row in rows]
-
-        table_text = "\n".join(lines)
-
-        self.review_text_left.setFontFamily("Courier New")
-        self.review_text_left.setText(table_text)
-        self.review_text_right.setText("")
+        layout.addWidget(review_widget)
         self.right_stack.setCurrentIndex(2)
 
     def progress_bar_update(self, value):
