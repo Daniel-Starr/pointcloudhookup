@@ -2,6 +2,8 @@ import sys
 import os
 import threading
 import numpy as np
+
+
 import laspy
 import open3d as o3d
 
@@ -19,6 +21,7 @@ from ui.vtk_widget import VTKPointCloudWidget
 from ui.compress import GIMExtractor
 from ui.parsetower import GIMTower, load_towers_from_gim_path  # ✅ 添加类导入
 from ui.review_panel import build_review_widget
+from ui.save_cbm import run_save_and_compress
 
 class ProgressSignal(QObject):
     update_progress = pyqtSignal(int)
@@ -50,7 +53,7 @@ class TowerDetectionTool(QMainWindow):
     def init_ui(self):
         button_layout = QHBoxLayout()
         self.buttons = {}
-        for name in ["导入GIM", "导入点云", "去除地物", "提取杆塔", "校对", "返回"]:
+        for name in ["导入GIM", "导入点云", "去除地物", "提取杆塔", "校对", "保存", "返回"]:
             btn = QPushButton(name)
             button_layout.addWidget(btn)
             self.buttons[name] = btn
@@ -104,6 +107,7 @@ class TowerDetectionTool(QMainWindow):
         self.buttons["提取杆塔"].clicked.connect(self.extract_tower)
         self.buttons["导入GIM"].clicked.connect(self.import_gim_file_threaded)
         self.buttons["校对"].clicked.connect(self.review_mode)
+        self.buttons["保存"].clicked.connect(self.on_save_button_clicked)
         self.buttons["返回"].clicked.connect(self.go_back_view)
 
     def push_view_history(self):
@@ -226,16 +230,28 @@ class TowerDetectionTool(QMainWindow):
 
     def review_mode(self):
         self.push_view_history()
+
+        # 调用 build_review_widget 函数，传递 tower_list 参数
         review_widget = build_review_widget(self.tower_list)
+
+        # 更新主界面的 layout 来显示新内容
         layout = self.review_panel.layout()
 
+        # 清空现有的内容
         for i in reversed(range(layout.count())):
             widget = layout.itemAt(i).widget()
             if widget:
                 widget.setParent(None)
 
+        # 将新的 review_widget 添加到 layout 中
         layout.addWidget(review_widget)
-        self.right_stack.setCurrentIndex(2)
+        self.right_stack.setCurrentIndex(2)  # 设置当前显示的面板为校对面板
+
+    def on_save_button_clicked(self):
+        self.log_output.clear()
+        run_save_and_compress(log_fn=self.log_output.append)
+
+
 
     def progress_bar_update(self, value):
         self.progress_bar.setValue(value)

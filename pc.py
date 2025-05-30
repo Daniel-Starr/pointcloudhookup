@@ -1,9 +1,9 @@
-# 完整更新后的 PCgui.py
-
 import sys
 import os
 import threading
 import numpy as np
+
+
 import laspy
 import open3d as o3d
 
@@ -19,7 +19,9 @@ from ui.import_PC import run_voxel_downsampling
 from ui.extract import extract_and_visualize_towers
 from ui.vtk_widget import VTKPointCloudWidget
 from ui.compress import GIMExtractor
-from ui.parsetower import GIMTower
+from ui.parsetower import GIMTower, load_towers_from_gim_path  # ✅ 添加类导入
+from ui.review_panel import build_review_widget
+from ui.save_cbm import run_save_and_compress
 
 class ProgressSignal(QObject):
     update_progress = pyqtSignal(int)
@@ -46,11 +48,12 @@ class TowerDetectionTool(QMainWindow):
         self.downsampled_pcd = None
         self.tower_list = []
         self.gim_path = None
+        self.cbm_filenames = []  # ✅ 存储 CBM 文件名
 
     def init_ui(self):
         button_layout = QHBoxLayout()
         self.buttons = {}
-        for name in ["导入GIM", "导入点云", "去除地物", "提取杆塔", "校对", "返回"]:
+        for name in ["导入GIM", "导入点云", "去除地物", "提取杆塔", "校对", "保存", "返回"]:
             btn = QPushButton(name)
             button_layout.addWidget(btn)
             self.buttons[name] = btn
@@ -71,15 +74,8 @@ class TowerDetectionTool(QMainWindow):
         self.right_stack = QStackedWidget()
         self.vtk_view = VTKPointCloudWidget()
         self.gim_table = QTableWidget()
-
-        self.review_text_left = QTextEdit()
-        self.review_text_left.setReadOnly(True)
-        self.review_text_right = QTextEdit()
         self.review_panel = QWidget()
-        review_layout = QHBoxLayout()
-        review_layout.addWidget(self.review_text_left)
-        review_layout.addWidget(self.review_text_right)
-        self.review_panel.setLayout(review_layout)
+        self.review_panel.setLayout(QHBoxLayout())
 
         self.right_stack.addWidget(self.vtk_view)
         self.right_stack.addWidget(self.gim_table)
@@ -111,6 +107,7 @@ class TowerDetectionTool(QMainWindow):
         self.buttons["提取杆塔"].clicked.connect(self.extract_tower)
         self.buttons["导入GIM"].clicked.connect(self.import_gim_file_threaded)
         self.buttons["校对"].clicked.connect(self.review_mode)
+        self.buttons["保存"].clicked.connect(self.on_save_button_clicked)
         self.buttons["返回"].clicked.connect(self.go_back_view)
 
     def push_view_history(self):
@@ -172,8 +169,11 @@ class TowerDetectionTool(QMainWindow):
             extracted_path = extractor.extract_embedded_7z()
             self.signals.update_progress.emit(50)
             self.signals.append_log.emit(f"✅ 解压完成，输出目录: {extracted_path}")
-            parser = GIMTower(gim_file=extracted_path)
+
+            parser = GIMTower(extracted_path, log_callback=self.signals.append_log.emit)
             towers = parser.parse()
+            self.cbm_filenames = parser.get_cbm_filenames()  # ✅ 获取 CBM 文件名
+
             self.gim_path = extracted_path
             self.tower_list = towers
             self.signals.update_table.emit(towers)
@@ -215,7 +215,10 @@ class TowerDetectionTool(QMainWindow):
             QMessageBox.warning(self, "未导入点云", "请先导入并处理点云！")
             return
 
-        parsed_text = '\n'.join([f"✅ 杆塔{t.get('properties', {}).get('杆塔编号', t.get('name', f'塔杆{i+1}'))}: {t.get('properties', {}).get('杆塔高', '?')}m高 | {t.get('properties', {}).get('呼高', '?')}m宽 | 中心坐标[{t.get('lng', '?')} {t.get('lat', '?')} {t.get('h', '?')}]" for i, t in enumerate(self.tower_list)])
+        parsed_text = '\n'.join([
+            f"✅ 杆塔{t.get('properties', {}).get('杆塔编号', t.get('name', f'塔杆{i+1}'))}: {t.get('properties', {}).get('杆塔高', '?')}m高 | {t.get('properties', {}).get('呼高', '?')}m宽 | 中心坐标[{t.get('lng', '?')} {t.get('lat', '?')} {t.get('h', '?')}]"
+            for i, t in enumerate(self.tower_list)
+        ])
 
         try:
             full_pcd, tower_geometries = extract_and_visualize_towers(self.pointcloud_path, parsed_text)
@@ -228,39 +231,27 @@ class TowerDetectionTool(QMainWindow):
     def review_mode(self):
         self.push_view_history()
 
-        headers = ["杆塔编号", "呼高", "杆塔高", "经度", "纬度", "高度", "北方向偏角"]
-        rows = []
+        # 调用 build_review_widget 函数，传递 tower_list 参数
+        review_widget = build_review_widget(self.tower_list)
 
-        for t in self.tower_list:
-            props = t.get('properties', {})
-            row = [
-                str(props.get("杆塔编号", "")),
-                str(props.get("呼高", "")),
-                str(props.get("杆塔高", "")),
-                str(t.get("lng", "")),
-                str(t.get("lat", "")),
-                str(t.get("h", "")),
-                str(t.get("r", ""))
-            ]
-            rows.append(row)
+        # 更新主界面的 layout 来显示新内容
+        layout = self.review_panel.layout()
 
-        col_widths = [len(h) for h in headers]
-        for row in rows:
-            for i, cell in enumerate(row):
-                col_widths[i] = max(col_widths[i], len(cell))
+        # 清空现有的内容
+        for i in reversed(range(layout.count())):
+            widget = layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
 
-        def format_row_centered(row_data):
-            return "  ".join(cell.center(col_widths[i]) for i, cell in enumerate(row_data))
+        # 将新的 review_widget 添加到 layout 中
+        layout.addWidget(review_widget)
+        self.right_stack.setCurrentIndex(2)  # 设置当前显示的面板为校对面板
 
-        lines = [format_row_centered(headers)]
-        lines += [format_row_centered(row) for row in rows]
+    def on_save_button_clicked(self):
+        self.log_output.clear()
+        run_save_and_compress(log_fn=self.log_output.append)
 
-        table_text = "\n".join(lines)
 
-        self.review_text_left.setFontFamily("Courier New")
-        self.review_text_left.setText(table_text)
-        self.review_text_right.setText("")
-        self.right_stack.setCurrentIndex(2)
 
     def progress_bar_update(self, value):
         self.progress_bar.setValue(value)
