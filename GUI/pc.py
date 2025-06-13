@@ -9,17 +9,17 @@ import open3d as o3d
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QPushButton,
-    QHBoxLayout, QVBoxLayout, QLabel, QSplitter,
+    QHBoxLayout, QVBoxLayout, QSplitter,
     QFileDialog, QMessageBox, QGroupBox, QProgressBar,
     QTextEdit, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
 
-from ui.import_PC import run_voxel_downsampling
+from GUI.import_PC import run_voxel_downsampling
 from ui.extract import extract_and_visualize_towers
 from ui.vtk_widget import VTKPointCloudWidget
 from ui.compress import GIMExtractor
-from ui.parsetower import GIMTower, load_towers_from_gim_path  # ✅ 添加类导入
+from ui.parsetower import GIMTower  # ✅ 添加类导入
 from ui.review_panel import build_review_widget
 from ui.save_cbm import run_save_and_compress
 

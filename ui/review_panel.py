@@ -4,6 +4,7 @@ import math
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
+from PyQt5.QtWidgets import QLabel
 
 # Haversine公式计算经纬度差异
 def haversine(lat1, lon1, lat2, lon2):
@@ -67,6 +68,13 @@ def save_tower_list(tower_list, filename="updated_tower_list.xlsx"):
 
 
 def build_review_widget(tower_list, preferred_height=400):
+    gim_label = QLabel("GIM数据")
+    gim_label.setStyleSheet("font-size: 14px; font-weight: bold; color: red;")
+
+    pointcloud_label = QLabel("点云数据")
+    pointcloud_label.setStyleSheet("font-size: 14px; font-weight: bold; color: red;")
+
+
     headers = ["杆塔编号", "呼高", "杆塔高", "经度", "纬度", "高度", "北方向偏角"]  # 不包含 CBM 路径
 
     table = QTableWidget()
@@ -164,6 +172,8 @@ def build_review_widget(tower_list, preferred_height=400):
     layout.setContentsMargins(0, 0, 0, 0)
     layout.addWidget(table)
     layout.addWidget(excel_table)
+    layout.addWidget(gim_label)  # 添加GIM数据标签
+    layout.addWidget(pointcloud_label)
     panel.setLayout(layout)
 
     print(f"Table Data: {tower_list}")

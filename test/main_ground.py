@@ -167,4 +167,4 @@ def save_non_ground_points(las, non_ground_points, output_path):
 
 # 使用示例
 # process_las_file("output.las", "non_ground_output.las")
-process_las_file("pointcloud.las", "non_ground_output.las")
+process_las_file("F:/BaiduNetdiskDownload/cloud_aee9efa6a962685f.las", "F:/Project/pointcloudhookup/output/non_ground_output.las")

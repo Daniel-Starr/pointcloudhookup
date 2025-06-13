@@ -9,47 +9,6 @@ from sklearn.cluster import DBSCAN
 from pathlib import Path
 from pyproj import Transformer
 
-
-def main():
-    """主函数：提供用户交互界面"""
-    print("=== 杆塔点云提取程序 ===")
-    print("功能：从点云数据中自动检测电力杆塔")
-
-    # 用户输入参数
-    input_path = input("请输入LAS文件路径: ").strip('"')
-    if not os.path.exists(input_path):
-        print(f"错误：文件不存在 - {input_path}")
-        return
-
-    print("\n请设置检测参数（按Enter使用默认值）")
-    eps = float(input("聚类半径(m) [默认8.0]: ") or 8.0)
-    min_points = int(input("最小聚类点数 [默认100]: ") or 100)
-    min_height = float(input("杆塔最小高度(m) [默认15.0]: ") or 15.0)
-
-    print("\n开始处理...")
-    try:
-        towers = extract_towers(
-            input_las_path=input_path,
-            eps=eps,
-            min_points=min_points,
-            min_height=min_height,
-            log_callback=print
-        )
-
-        if towers:
-            print(f"\n成功检测到 {len(towers)} 个杆塔！")
-            print("结果已保存到:")
-            print("- output_towers/ (单个杆塔点云)")
-            print("- towers_info.xlsx (杆塔属性表)")
-        else:
-            print("\n未检测到符合要求的杆塔")
-
-    except Exception as e:
-        print(f"\n处理失败: {str(e)}")
-    finally:
-        input("\n按Enter键退出...")
-
-
 # 已知杆塔位置（用于调试验证）
 KNOWN_TOWERS = [
     # (经度, 纬度, 高度)
@@ -377,6 +336,3 @@ def _save_tower_las(points, colors, header_info, output_path, log_callback=None)
     except Exception as e:
         if log_callback:
             log_callback(f"⚠️ 保存失败 {output_path}: {str(e)}")
-
-if __name__ == "__main__":
-    main()

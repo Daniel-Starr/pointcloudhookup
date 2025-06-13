@@ -9,19 +9,25 @@ import open3d as o3d
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QPushButton,
-    QHBoxLayout, QVBoxLayout, QLabel, QSplitter,
+    QHBoxLayout, QVBoxLayout, QSplitter,
     QFileDialog, QMessageBox, QGroupBox, QProgressBar,
     QTextEdit, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
 
-from ui.import_PC import run_voxel_downsampling
+from GUI.import_PC import run_voxel_downsampling
 from ui.extract import extract_and_visualize_towers
 from ui.vtk_widget import VTKPointCloudWidget
 from ui.compress import GIMExtractor
-from ui.parsetower import GIMTower, load_towers_from_gim_path  # ✅ 添加类导入
+from ui.parsetower import GIMTower  # ✅ 添加类导入
 from ui.review_panel import build_review_widget
 from ui.save_cbm import run_save_and_compress
+
+
+from utils.table_match_gim import match_from_gim_tower_list
+from utils.table_match_gim import correct_from_gim_tower_list
+
+
 
 class ProgressSignal(QObject):
     update_progress = pyqtSignal(int)
@@ -53,7 +59,7 @@ class TowerDetectionTool(QMainWindow):
     def init_ui(self):
         button_layout = QHBoxLayout()
         self.buttons = {}
-        for name in ["导入GIM", "导入点云", "去除地物", "提取杆塔", "校对", "保存", "返回"]:
+        for name in ["导入GIM", "导入点云", "去除地物", "提取杆塔", "匹配", "校对", "保存", "返回"]:
             btn = QPushButton(name)
             button_layout.addWidget(btn)
             self.buttons[name] = btn
@@ -106,7 +112,8 @@ class TowerDetectionTool(QMainWindow):
         self.buttons["导入点云"].clicked.connect(self.import_pointcloud)
         self.buttons["提取杆塔"].clicked.connect(self.extract_tower)
         self.buttons["导入GIM"].clicked.connect(self.import_gim_file_threaded)
-        self.buttons["校对"].clicked.connect(self.review_mode)
+        self.buttons["匹配"].clicked.connect(self.match_only)
+        self.buttons["校对"].clicked.connect(self.correct_only)
         self.buttons["保存"].clicked.connect(self.on_save_button_clicked)
         self.buttons["返回"].clicked.connect(self.go_back_view)
 
@@ -210,6 +217,8 @@ class TowerDetectionTool(QMainWindow):
                 if item:
                     item.setTextAlignment(Qt.AlignCenter)
 
+
+
     def extract_tower(self):
         if self.downsampled_pcd is None:
             QMessageBox.warning(self, "未导入点云", "请先导入并处理点云！")
@@ -227,6 +236,10 @@ class TowerDetectionTool(QMainWindow):
             self.log_output.append("✅ 杆塔提取与可视化完成")
         except Exception as e:
             QMessageBox.critical(self, "杆塔提取失败", str(e))
+
+
+
+
 
     def review_mode(self):
         self.push_view_history()
@@ -250,6 +263,41 @@ class TowerDetectionTool(QMainWindow):
     def on_save_button_clicked(self):
         self.log_output.clear()
         run_save_and_compress(log_fn=self.log_output.append)
+
+    def match_only(self):
+        if not self.tower_list:
+            QMessageBox.warning(self, "缺少数据", "请先导入 GIM 并提取杆塔数据")
+            return
+        self.push_view_history()
+        widget = match_from_gim_tower_list(self.tower_list)
+        self._update_review_panel(widget)
+
+    def correct_only(self):
+        if not self.tower_list:
+            QMessageBox.warning(self, "缺少数据", "请先导入 GIM 并提取杆塔数据")
+            return
+        self.push_view_history()
+        widget = correct_from_gim_tower_list(self.tower_list)
+        self._update_review_panel(widget)
+
+    def _update_review_panel(self, widget):
+        layout = self.review_panel.layout()
+        for i in reversed(range(layout.count())):
+            old = layout.itemAt(i).widget()
+            if old:
+                old.setParent(None)
+        layout.addWidget(widget)
+        self.right_stack.setCurrentIndex(2)
+
+
+    def _update_review_panel(self, review_widget):
+        layout = self.review_panel.layout()
+        for i in reversed(range(layout.count())):
+            widget = layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+        layout.addWidget(review_widget)
+        self.right_stack.setCurrentIndex(2)
 
 
 

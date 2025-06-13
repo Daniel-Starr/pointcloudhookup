@@ -1,97 +1,57 @@
-import re
-import os
-import laspy
 import numpy as np
 import open3d as o3d
-
-def create_bbox_lineset(x_min, x_max, y_min, y_max, z_min, z_max):
-    corners = [
-        [x_min, y_min, z_min], [x_max, y_min, z_min],
-        [x_max, y_max, z_min], [x_min, y_max, z_min],
-        [x_min, y_min, z_max], [x_max, y_min, z_max],
-        [x_max, y_max, z_max], [x_min, y_max, z_max]
-    ]
-    lines = [
-        [0, 1], [1, 2], [2, 3], [3, 0],
-        [4, 5], [5, 6], [6, 7], [7, 4],
-        [0, 4], [1, 5], [2, 6], [3, 7]
-    ]
-    box_points = []
-    for line in lines:
-        box_points.append(corners[line[0]])
-        box_points.append(corners[line[1]])
-    return np.array(box_points)
+import laspy
+import os
 
 
+def extract_and_visualize_towers(las_path: str, tower_obbs: list):
+    """
+    根据杆塔OBB信息在点云中可视化杆塔
 
-def extract_and_visualize_towers(las_path: str, parsed_text: str):
-    tower_data = []
-    parsed_text = """=== 开始杆塔检测（候选簇：303个） ===
-    ✅ 杆塔8: 17.4m高 | 20.1m宽 | 中心坐标[4.37587898e+05 3.14069158e+06 1.31457350e+02]
-    ✅ 杆塔188: 29.8m高 | 10.2m宽 | 中心坐标[4.37787178e+05 3.14000696e+06 8.77722064e+01]
-    ✅ 杆塔199: 21.8m高 | 16.6m宽 | 中心坐标[4.37908948e+05 3.13960682e+06 8.00563301e+01]
-    ✅ 杆塔235: 21.0m高 | 13.0m宽 | 中心坐标[4.37676583e+05 3.14037950e+06 8.25588932e+01]"""
-
-    pattern = r'✅ 杆塔(\d+): ([\d.]+)m高 \| ([\d.]+)m宽 \| 中心坐标\[(\d+\.?\d*e?[+-]?\d*) (\d+\.?\d*e?[+-]?\d*) (\d+\.?\d*e?[+-]?\d*)\]'
-    for line in parsed_text.strip().split('\n'):
-        match = re.match(pattern, line.strip())
-        if match:
-            tower_data.append({
-                'id': int(match.group(1)),
-                'height': float(match.group(2)),
-                'width': float(match.group(3)),
-                'x': float(match.group(4)),
-                'y': float(match.group(5)),
-                'z': float(match.group(6))
-            })
-
+    参数:
+        las_path: LAS点云文件路径
+        tower_obbs: 杆塔OBB信息列表，每个元素是一个字典，包含：
+            'center': 中心点坐标 [x, y, z]
+            'extent': 三个方向的尺寸 [dx, dy, dz]
+            'rotation': 3x3旋转矩阵
+    """
     if not os.path.exists(las_path):
         raise FileNotFoundError(f"未找到文件: {las_path}")
 
+    # 读取点云
     las = laspy.read(las_path)
     points = np.vstack((las.x, las.y, las.z)).T
 
     tower_geometries = []
     full_pcd = points
 
-    for tower in tower_data:
-        w = tower['width']
-        h = tower['height']
-        cx, cy, cz = tower['x'], tower['y'], tower['z']
+    for tower_info in tower_obbs:
+        try:
+            # 获取杆塔中心位置和尺寸
+            center = tower_info['center']
+            expansion_ratio = 1.2  # 放大20%
+            extents = tower_info['extent'] * expansion_ratio
+            rotation = tower_info['rotation']  # 旋转矩阵
 
-        # 粗略筛选点云范围（加大范围确保完整塔杆）
-        x_min, x_max = cx - w, cx + w
-        y_min, y_max = cy - w, cy + w
-        z_min, z_max = cz - h, cz + h * 2
+            # 创建OBB
+            obb = o3d.geometry.OrientedBoundingBox(center, rotation, extents)
 
-        mask = (
-            (points[:, 0] >= x_min) & (points[:, 0] <= x_max) &
-            (points[:, 1] >= y_min) & (points[:, 1] <= y_max) &
-            (points[:, 2] >= z_min) & (points[:, 2] <= z_max)
-        )
-        tower_points = points[mask]
-
-        if tower_points.size > 0:
-            # 不传点云，只传线框，去掉绿色点云显示
-            # tower_geometries.append((tower_points, np.random.rand(3)))
-
-            # 计算最小有向包围盒(OBB)
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(tower_points)
-
-            obb = pcd.get_oriented_bounding_box()
-            obb.color = (1.0, 0.0, 0.0)
-
+            # 创建线框
             lineset = o3d.geometry.LineSet.create_from_oriented_bounding_box(obb)
             line_points = np.asarray(lineset.points)
             lines = np.asarray(lineset.lines)
 
-            # 构造 24 个点的线段对
+            # 构造线段的点对（每两个点构成一条线）
             box_pts = []
             for line in lines:
                 box_pts.append(line_points[line[0]])
                 box_pts.append(line_points[line[1]])
 
+            # 添加红色线框
             tower_geometries.append((np.array(box_pts), (1.0, 0.0, 0.0)))
+
+        except Exception as e:
+            print(f"⚠️ 杆塔可视化失败: {str(e)}")
+            continue
 
     return full_pcd, tower_geometries
