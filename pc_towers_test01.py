@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
 
-from GUI.import_PC import run_voxel_downsampling
+from ui.import_PC import run_voxel_downsampling
 from ui.vtk_widget import VTKPointCloudWidget
 from ui.compress import GIMExtractor
 from ui.parsetower import GIMTower

@@ -13,16 +13,17 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
 
-from GUI.import_PC import run_voxel_downsampling
+from ui.import_PC import run_voxel_downsampling
 from ui.vtk_widget import VTKPointCloudWidget
 from ui.compress import GIMExtractor
 from ui.parsetower import GIMTower
 from ui.review_panel import build_review_widget
 from ui.save_cbm import update_and_compress_from_correction
+from ui.extract import extract_and_visualize_towers  # 导入extract.py
 
 from utils.table_match_gim import match_from_gim_tower_list
 from utils.table_match_gim import correct_from_gim_tower_list
-from ui.ui.tower_extraction import extract_towers
+from utils.tower_extraction import extract_towers
 
 
 class ProgressSignal(QObject):
@@ -31,25 +32,25 @@ class ProgressSignal(QObject):
     update_vtk_scene = pyqtSignal(object, object)
     update_table = pyqtSignal(list)
     switch_to_table = pyqtSignal()
-    switch_to_vtk = pyqtSignal()  # 新增VTK切换信号
+    switch_to_vtk = pyqtSignal()
 
 
 class TowerDetectionTool(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("点云校准工具")
+        self.setWindowTitle("竣工图模型与激光点云数据自动校对与优化工具")
         self.setGeometry(300, 100, 1400, 800)
 
         # 信号对象
         self.signals = ProgressSignal()
 
-        #连接信号槽
+        # 连接信号槽
         self.signals.update_progress.connect(self.progress_bar_update)
         self.signals.append_log.connect(self.log_output_append)
         self.signals.update_vtk_scene.connect(self.vtk_view_display_safe)
         self.signals.update_table.connect(self.fill_gim_table)
         self.signals.switch_to_table.connect(self.show_table_view)
-        self.signals.switch_to_vtk.connect(self.show_vtk_view)  # 新增VTK切换信号
+        self.signals.switch_to_vtk.connect(self.show_vtk_view)
 
         self.view_history = []
         self.init_ui()
@@ -63,8 +64,8 @@ class TowerDetectionTool(QMainWindow):
         self.cbm_filenames = []
         self.tower_geometries = []
         self.original_gim_file_path = None
-        self.corrected_data = None  # 这里才是正确的位置
-
+        self.corrected_data = None
+        self.tower_obbs = []  # 存储提取的杆塔OBB信息
 
     def init_ui(self):
         button_layout = QHBoxLayout()
@@ -154,6 +155,7 @@ class TowerDetectionTool(QMainWindow):
 
             # 清空之前的杆塔数据
             self.tower_geometries = []
+            self.tower_obbs = []
 
             # 在后台线程中加载和显示点云
             threading.Thread(target=self.load_and_display_pointcloud, args=(file_path,), daemon=True).start()
@@ -285,7 +287,11 @@ class TowerDetectionTool(QMainWindow):
             threading.Thread(target=self.import_gim_file, args=(file_path,)).start()
 
     def import_gim_file(self, file_path):
+        """更新导入GIM文件方法，保存原始文件路径"""
         try:
+            # 保存原始GIM文件路径
+            self.original_gim_file_path = file_path
+
             output_dir = os.path.join(os.getcwd(), 'output_gim')
             os.makedirs(output_dir, exist_ok=True)
             self.signals.append_log.emit(f"📦📦 开始解压 GIM 文件: {file_path}")
@@ -416,14 +422,15 @@ class TowerDetectionTool(QMainWindow):
                 self.signals.update_progress.emit(100)
                 return
 
-            # 保存杆塔几何体
-            self.tower_geometries = tower_obbs
+            # 保存杆塔几何体 - 修正：应该保存原始提取的数据
+            self.tower_obbs = tower_obbs  # 这里保存原始的OBB数据
+            self.tower_geometries = tower_obbs  # 保持兼容性
             self.signals.append_log.emit(f"✅ 成功提取 {len(tower_obbs)} 个杆塔")
             self.signals.update_progress.emit(90)
 
             # 转换杆塔几何体为VTK可用格式
             self.signals.append_log.emit("🎨 准备显示杆塔...")
-            tower_geometries_for_vtk = self.convert_tower_obbs_to_vtk_format(tower_obbs)
+            tower_geometries_for_vtk = self.convert_tower_obbs_to_vtk_format_enhanced(tower_obbs)
 
             # 自动显示结果 - 点云 + 杆塔
             self.signals.append_log.emit("🖥️ 更新3D显示...")
@@ -443,11 +450,11 @@ class TowerDetectionTool(QMainWindow):
             import traceback
             traceback.print_exc()
 
-    def convert_tower_obbs_to_vtk_format(self, tower_obbs):
-        """将杆塔OBB转换为VTK可用的格式"""
+    def convert_tower_obbs_to_vtk_format_enhanced(self, tower_obbs):
+        """增强版的杆塔OBB转换为VTK格式 - 解决矩形框太小的问题"""
         tower_geometries_for_vtk = []
 
-        self.log_output.append(f"🔄 转换 {len(tower_obbs)} 个杆塔几何体...")
+        self.log_output.append(f"🔄 转换 {len(tower_obbs)} 个杆塔几何体（增强版）...")
 
         for i, tower_info in enumerate(tower_obbs):
             try:
@@ -460,8 +467,15 @@ class TowerDetectionTool(QMainWindow):
                     self.log_output.append(f"⚠️ 杆塔 {i} 缺少必要信息，跳过")
                     continue
 
-                # 创建OBB
-                obb = o3d.geometry.OrientedBoundingBox(center, rotation, extents)
+                # 🔧 修复：进一步增大显示框 - 确保完全包裹杆塔
+                # 应用更大的放大因子，特别是高度方向
+                scale_vector = np.array([2.5, 2.5, 4.0])  # x放大150%，y放大150%，z放大300%
+                enhanced_extents = np.array(extents) * scale_vector
+
+                self.log_output.append(f"📏 杆塔{i}: 原始尺寸{extents}, 增强尺寸{enhanced_extents}")
+
+                # 创建增强的OBB
+                obb = o3d.geometry.OrientedBoundingBox(center, rotation, enhanced_extents)
 
                 # 创建线框
                 lineset = o3d.geometry.LineSet.create_from_oriented_bounding_box(obb)
@@ -477,43 +491,84 @@ class TowerDetectionTool(QMainWindow):
                 # 添加红色线框 (RGB格式)
                 tower_geometries_for_vtk.append((np.array(box_pts), (1.0, 0.0, 0.0)))
 
+                self.log_output.append(f"✅ 杆塔{i}转换成功，中心：{center}, 增强尺寸：{enhanced_extents}")
+
             except Exception as e:
                 self.log_output.append(f"⚠️ 杆塔 {i} 转换失败: {str(e)}")
                 continue
 
-        self.log_output.append(f"✅ 成功转换 {len(tower_geometries_for_vtk)} 个杆塔几何体")
+        self.log_output.append(f"✅ 成功转换 {len(tower_geometries_for_vtk)} 个增强杆塔几何体")
         return tower_geometries_for_vtk
 
+    def convert_tower_obbs_to_vtk_format(self, tower_obbs):
+        """原版的杆塔OBB转换为VTK格式 - 保持向后兼容"""
+        return self.convert_tower_obbs_to_vtk_format_enhanced(tower_obbs)
+
     def extract_tower(self):
-        """提取杆塔功能 - 重新显示已提取的杆塔"""
-        if self.original_pcd is None:
-            QMessageBox.warning(self, "未导入点云", "请先导入并处理点云！")
+        """🔧 提取杆塔功能 - 使用extract.py进行可视化增强（修复版）"""
+        if self.pointcloud_path is None:
+            QMessageBox.warning(self, "未导入点云", "请先导入点云数据！")
             return
 
-        if not self.tower_geometries:
+        if not self.tower_obbs:
             QMessageBox.warning(self, "未检测到杆塔", "请先执行'去除地物'步骤提取杆塔信息")
             return
 
         try:
-            self.log_output.append("🔍 正在显示已提取的杆塔...")
+            self.log_output.append("🔍 使用extract.py增强显示已提取的杆塔...")
 
             # 自动切换到VTK视图
             self.push_view_history()
             self.right_stack.setCurrentIndex(0)
 
-            # 转换杆塔几何体
-            tower_geometries_for_vtk = self.convert_tower_obbs_to_vtk_format(self.tower_geometries)
+            # 🔧 使用extract.py提供更好的可视化（修复了变量名错误）
+            self.log_output.append("🎨 调用extract.py进行杆塔可视化增强...")
 
-            # 显示点云和杆塔
-            self.vtk_view_display_safe(self.original_pcd, tower_geometries_for_vtk)
+            # 调用extract.py的函数（修复了变量名）
+            full_pcd, enhanced_tower_geometries = extract_and_visualize_towers(
+                self.pointcloud_path,    # 正确的变量名
+                self.tower_obbs,         # 正确的变量名
+                use_kuangxuan_method=True,
+                kuangxuan_preset="kuangxuan_original"
+            )
 
-            self.log_output.append(f"✅ 杆塔显示完成，共 {len(self.tower_geometries)} 个杆塔")
+            self.log_output.append(f"✅ extract.py处理完成，增强杆塔数：{len(enhanced_tower_geometries)}")
+
+            # 显示增强后的结果
+            self.vtk_view_display_safe(self.original_pcd, enhanced_tower_geometries)
+
+            self.log_output.append(f"✅ 杆塔增强显示完成，共 {len(self.tower_obbs)} 个杆塔")
 
         except Exception as e:
             error_msg = f"杆塔显示失败: {str(e)}"
             QMessageBox.critical(self, "杆塔显示失败", error_msg)
             self.log_output.append(f"❌❌ {error_msg}")
 
+            # 如果extract.py失败，回退到原始方法
+            self.log_output.append("🔄 回退到原始显示方法...")
+            try:
+                tower_geometries_for_vtk = self.convert_tower_obbs_to_vtk_format_enhanced(self.tower_obbs)
+                self.vtk_view_display_safe(self.original_pcd, tower_geometries_for_vtk)
+                self.log_output.append("✅ 使用原始方法显示杆塔成功")
+            except Exception as e2:
+                self.log_output.append(f"❌ 原始方法也失败: {str(e2)}")
+
+    def review_mode(self):
+        self.push_view_history()
+
+        # 调用 build_review_widget 函数，传递 tower_list 参数
+        review_widget = build_review_widget(self.tower_list)
+
+        # 更新主界面的 layout 来显示新内容
+        layout = self.review_panel.layout()
+
+        # 清空现有的内容
+        for i in reversed(range(layout.count())):
+            widget = layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+
+        # 将新的 review_widget 添加到 layout 中
     def review_mode(self):
         self.push_view_history()
 
@@ -533,67 +588,19 @@ class TowerDetectionTool(QMainWindow):
         layout.addWidget(review_widget)
         self.right_stack.setCurrentIndex(2)  # 设置当前显示的面板为校对面板
 
-
     def match_only(self):
-        if not self.tower_list or not self.tower_geometries:
-            QMessageBox.warning(self, "数据缺失", "请先导入GIM数据并执行去除地物操作")
-            return
-
-        self.push_view_history()  # 将当前视图保存到历史记录
-        widget = match_from_gim_tower_list(self.tower_list, self.tower_geometries)  # 调用匹配函数生成匹配界面
-        self._update_review_panel(widget)  # 将生成的匹配界面更新到当前界面
-
-    def correct_only(self):
+        """匹配功能 - 也保存匹配后的数据"""
         if not self.tower_list or not self.tower_geometries:
             QMessageBox.warning(self, "数据缺失", "请先导入GIM数据并执行去除地物操作")
             return
 
         self.push_view_history()
-        widget = correct_from_gim_tower_list(self.tower_list, self.tower_geometries)
+        widget = match_from_gim_tower_list(self.tower_list, self.tower_geometries)
+
+        # 从匹配界面获取数据（如果需要的话）
+        self.corrected_data = self.extract_corrected_data_from_widget(widget)
+
         self._update_review_panel(widget)
-        QMessageBox.information(self, "校对完成", "杆塔位置已根据点云数据校正完成")
-        self.statusBar().showMessage("杆塔位置校正完成", 3000)
-
-    def _update_review_panel(self, widget):
-        layout = self.review_panel.layout()
-        for i in reversed(range(layout.count())):
-            old = layout.itemAt(i).widget()
-            if old:
-                old.setParent(None)
-        layout.addWidget(widget)
-        self.right_stack.setCurrentIndex(2)
-
-    def import_gim_file(self, file_path):
-        """更新导入GIM文件方法，保存原始文件路径"""
-        try:
-            # 保存原始GIM文件路径
-            self.original_gim_file_path = file_path
-
-            output_dir = os.path.join(os.getcwd(), 'output_gim')
-            os.makedirs(output_dir, exist_ok=True)
-            self.signals.append_log.emit(f"📦📦 开始解压 GIM 文件: {file_path}")
-            self.signals.update_progress.emit(10)
-            extractor = GIMExtractor(gim_file=file_path, output_folder=output_dir)
-            extracted_path = extractor.extract_embedded_7z()
-            self.signals.update_progress.emit(50)
-            self.signals.append_log.emit(f"✅ 解压完成，输出目录: {extracted_path}")
-
-            parser = GIMTower(extracted_path, log_callback=self.signals.append_log.emit)
-            towers = parser.parse()
-            self.cbm_filenames = parser.get_cbm_filenames()
-
-            self.gim_path = extracted_path
-            self.tower_list = towers
-            self.signals.update_table.emit(towers)
-            self.signals.switch_to_table.emit()
-            self.signals.update_progress.emit(90)
-            self.signals.append_log.emit(f"✅ 成功提取杆塔数：{len(towers)}")
-            self.signals.update_progress.emit(100)
-        except Exception as e:
-            error_msg = f"GIM导入失败：{str(e)}"
-            print("❌❌", error_msg)
-            QMessageBox.critical(self, "GIM导入失败", error_msg)
-            self.signals.append_log.emit(f"❌❌ {error_msg}")
 
     def correct_only(self):
         """校对功能 - 保存校对后的数据"""
@@ -649,6 +656,15 @@ class TowerDetectionTool(QMainWindow):
         except Exception as e:
             self.log_output.append(f"⚠️ 提取校对数据失败: {str(e)}")
             return []
+
+    def _update_review_panel(self, widget):
+        layout = self.review_panel.layout()
+        for i in reversed(range(layout.count())):
+            old = layout.itemAt(i).widget()
+            if old:
+                old.setParent(None)
+        layout.addWidget(widget)
+        self.right_stack.setCurrentIndex(2)
 
     def save_and_compress(self):
         """更新的保存和压缩功能"""
@@ -736,26 +752,6 @@ class TowerDetectionTool(QMainWindow):
             error_msg = f"保存失败：{str(e)}"
             self.signals.append_log.emit(f"❌❌ {error_msg}")
             progress_callback(0)
-
-    # 为了更好地处理匹配数据，也更新匹配功能
-    def match_only(self):
-        """匹配功能 - 也保存匹配后的数据"""
-        if not self.tower_list or not self.tower_geometries:
-            QMessageBox.warning(self, "数据缺失", "请先导入GIM数据并执行去除地物操作")
-            return
-
-        self.push_view_history()
-        widget = match_from_gim_tower_list(self.tower_list, self.tower_geometries)
-
-        # 从匹配界面获取数据（如果需要的话）
-        self.corrected_data = self.extract_corrected_data_from_widget(widget)
-
-        self._update_review_panel(widget)
-
-    def go_back_view(self):
-        if self.view_history:
-            last_index = self.view_history.pop()
-            self.right_stack.setCurrentIndex(last_index)
 
     def progress_bar_update(self, value):
         """进度条更新"""
