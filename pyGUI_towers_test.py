@@ -619,7 +619,7 @@ class TowerDetectionTool(QMainWindow):
         self.statusBar().showMessage("杆塔位置校正完成", 3000)
 
     def extract_corrected_data_from_widget(self, widget):
-        """从校对界面提取校对后的数据"""
+        """从校对界面提取校对后的数据 - 更新以适配新的列名"""
         try:
             # 假设widget有左侧表格，我们从中提取数据
             corrected_data = []
@@ -632,14 +632,15 @@ class TowerDetectionTool(QMainWindow):
                     if item and hasattr(item.widget(), 'rowCount'):  # 是表格
                         table = item.widget()
 
-                        # 提取表格数据
+                        # 提取表格数据 - 适配新的列名和位置调换
+                        # 新的列顺序：["杆塔编号", "纬度", "经度", "高程", "北方向偏角"]
                         for row in range(table.rowCount()):
                             if table.item(row, 0):  # 确保行有数据
                                 row_data = {
                                     '杆塔编号': table.item(row, 0).text() if table.item(row, 0) else '',
                                     '纬度': table.item(row, 1).text() if table.item(row, 1) else '0',
                                     '经度': table.item(row, 2).text() if table.item(row, 2) else '0',
-                                    '高度': table.item(row, 3).text() if table.item(row, 3) else '0',
+                                    '高度': table.item(row, 3).text() if table.item(row, 3) else '0',  # 保持'高度'键名以兼容现有代码
                                     '北方向偏角': table.item(row, 4).text() if table.item(row, 4) else '0'
                                 }
 

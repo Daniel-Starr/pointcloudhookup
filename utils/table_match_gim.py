@@ -105,18 +105,18 @@ def match_from_gim_tower_list(tower_list, pointcloud_towers):
     # 创建坐标转换器 (CGCS2000 -> WGS84)
     transformer = Transformer.from_crs("EPSG:4547", "EPSG:4326", always_xy=True)
 
-    # 准备左表数据 (GIM杆塔，保持原始数据)
+    # 准备左表数据 (GIM杆塔，保持原始数据) - 将"高度"改为"高程"
     left_data = []
     for t in tower_list:
         left_data.append([
             t.get("properties", {}).get("杆塔编号", ""),  # 杆塔编号
             f"{t.get('lat', 0):.6f}",  # 纬度
             f"{t.get('lng', 0):.6f}",  # 经度
-            f"{t.get('h', 0):.2f}",  # 高度
+            f"{t.get('h', 0):.2f}",  # 高程（原来是高度）
             f"{t.get('r', 0):.1f}"  # 方向角
         ])
 
-    # 准备右表数据 (点云杆塔，转换后坐标)
+    # 准备右表数据 (点云杆塔，转换后坐标) - 移除"杆塔高度"列，将"海拔高度"改为"高程"
     right_data = []
     converted_towers = []  # 存储转换后的点云杆塔信息
 
@@ -138,22 +138,21 @@ def match_from_gim_tower_list(tower_list, pointcloud_towers):
         }
         converted_towers.append(converted_tower)
 
-        # 准备表格显示数据
+        # 准备表格显示数据 - 移除了"杆塔高度"列，调换经纬度位置
         right_data.append([
             converted_tower['id'],  # 杆塔编号（稍后可能会被更新）
-            f"{lon:.6f}",  # 经度(WGS84)
             f"{lat:.6f}",  # 纬度(WGS84)
-            f"{converted_center[2]:.2f}",  # 海拔高度
-            f"{converted_tower['height']:.1f}",  # 杆塔高度
+            f"{lon:.6f}",  # 经度(WGS84)
+            f"{converted_center[2]:.2f}",  # 高程（原来是海拔高度）
             f"{converted_tower['north_angle']:.1f}"  # 北方向偏角
         ])
 
-    # 创建左侧表格 (GIM杆塔)
-    left_headers = ["杆塔编号", "纬度", "经度", "高度", "北方向偏角"]
+    # 创建左侧表格 (GIM杆塔) - 将"高度"改为"高程"
+    left_headers = ["杆塔编号", "纬度", "经度", "高程", "北方向偏角"]
     table_left = create_tower_table(left_headers, left_data)
 
-    # 创建右侧表格 (点云杆塔)
-    right_headers = ["杆塔编号", "经度(WGS84)", "纬度(WGS84)", "海拔高度", "杆塔高度", "北方向偏角"]
+    # 创建右侧表格 (点云杆塔) - 移除"杆塔高度"，将"海拔高度"改为"高程"，调换经纬度位置
+    right_headers = ["杆塔编号", "纬度(WGS84)", "经度(WGS84)", "高程", "北方向偏角"]
     table_right = create_tower_table(right_headers, right_data)
 
     # 标签
@@ -226,18 +225,18 @@ def correct_from_gim_tower_list(tower_list, pointcloud_towers):
     # 创建坐标转换器 (CGCS2000 -> WGS84)
     transformer = Transformer.from_crs("EPSG:4547", "EPSG:4326", always_xy=True)
 
-    # 准备左表数据 (GIM杆塔，保持原始数据)
+    # 准备左表数据 (GIM杆塔，保持原始数据) - 将"高度"改为"高程"
     left_data = []
     for t in tower_list:
         left_data.append([
             t.get("properties", {}).get("杆塔编号", ""),  # 杆塔编号
             f"{t.get('lat', 0):.6f}",  # 纬度
             f"{t.get('lng', 0):.6f}",  # 经度
-            f"{t.get('h', 0):.2f}",  # 高度
+            f"{t.get('h', 0):.2f}",  # 高程（原来是高度）
             f"{t.get('r', 0):.1f}"  # 方向角
         ])
 
-    # 准备右表数据 (点云杆塔，转换后坐标)
+    # 准备右表数据 (点云杆塔，转换后坐标) - 移除"杆塔高度"列，将"海拔高度"改为"高程"
     right_data = []
     converted_towers = []  # 存储转换后的点云杆塔信息
 
@@ -259,22 +258,21 @@ def correct_from_gim_tower_list(tower_list, pointcloud_towers):
         }
         converted_towers.append(converted_tower)
 
-        # 准备表格显示数据
+        # 准备表格显示数据 - 移除了"杆塔高度"列，调换经纬度位置
         right_data.append([
             converted_tower['id'],  # 杆塔编号（只有配对成功的会被更新）
-            f"{lon:.6f}",  # 经度(WGS84)
             f"{lat:.6f}",  # 纬度(WGS84)
-            f"{converted_center[2]:.2f}",  # 海拔高度
-            f"{converted_tower['height']:.1f}",  # 杆塔高度
+            f"{lon:.6f}",  # 经度(WGS84)
+            f"{converted_center[2]:.2f}",  # 高程（原来是海拔高度）
             f"{converted_tower['north_angle']:.1f}"  # 北方向偏角
         ])
 
-    # 创建左侧表格 (GIM杆塔)
-    left_headers = ["杆塔编号", "纬度", "经度", "高度", "北方向偏角"]
+    # 创建左侧表格 (GIM杆塔) - 将"高度"改为"高程"
+    left_headers = ["杆塔编号", "纬度", "经度", "高程", "北方向偏角"]
     table_left = create_tower_table(left_headers, left_data)
 
-    # 创建右侧表格 (点云杆塔)
-    right_headers = ["杆塔编号", "经度(WGS84)", "纬度(WGS84)", "海拔高度", "杆塔高度", "北方向偏角"]
+    # 创建右侧表格 (点云杆塔) - 移除"杆塔高度"，将"海拔高度"改为"高程"，调换经纬度位置
+    right_headers = ["杆塔编号", "纬度(WGS84)", "经度(WGS84)", "高程", "北方向偏角"]
     table_right = create_tower_table(right_headers, right_data)
 
     # 标签
@@ -309,7 +307,7 @@ def correct_from_gim_tower_list(tower_list, pointcloud_towers):
             table_left.item(left_row, 1).setText(f"{pc_tower['converted_center'][1]:.6f}")
         if table_left.item(left_row, 2):  # 经度
             table_left.item(left_row, 2).setText(f"{pc_tower['converted_center'][0]:.6f}")
-        if table_left.item(left_row, 3):  # 高度
+        if table_left.item(left_row, 3):  # 高程（原来是高度）
             table_left.item(left_row, 3).setText(f"{pc_tower['converted_center'][2]:.2f}")
         if table_left.item(left_row, 4):  # 北方向偏角
             table_left.item(left_row, 4).setText(f"{pc_tower['north_angle']:.1f}")
