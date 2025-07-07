@@ -7,8 +7,11 @@ from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QTableWidget,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 
-from PyQt5.QtWidgets import QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QHBoxLayout  # 导入必要的组件
-from PyQt5.QtCore import Qt  # 导入 Qt 用于对齐方式
+from PyQt5.QtWidgets import QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QHBoxLayout
+from PyQt5.QtCore import Qt
+
+# 🔧 新增：导入高程转换器
+from utils.elevation_converter import ElevationConverter
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -31,44 +34,166 @@ def haversine(lat1, lon1, lat2, lon2):
     return R * c * 1000  # 转换为米
 
 
-def match_towers(gim_list, pointcloud_towers, transformer, distance_threshold=50, height_threshold=100):
+def convert_pointcloud_ellipsoid_to_orthometric(pointcloud_towers, transformer, region_n_value=25.0):
     """
-    匹配GIM杆塔和点云杆塔（使用转换后的WGS84坐标）
+    🔧 新增函数：将点云杆塔数据从椭球高转换为正高
+    注意：这里假设tower_extraction.py输出的是椭球高坐标系(CGCS2000)的数据
+
+    参数:
+        pointcloud_towers: 点云杆塔信息列表（椭球高数据）
+        transformer: 坐标转换器 (CGCS2000 -> WGS84)
+        region_n_value: 区域N值（默认25米）
+
+    返回:
+        转换后的点云杆塔列表，包含正高信息
+    """
+    print("🔄 开始将点云杆塔高程从椭球高转换为正高...")
+    print(f"📍 原始点云杆塔数量: {len(pointcloud_towers)}")
+
+    # 初始化高程转换器
+    try:
+        elev_converter = ElevationConverter(region_n_value=region_n_value)
+        print(f"✅ 高程转换器初始化成功，区域N值: {region_n_value}m")
+    except Exception as e:
+        print(f"⚠️ 高程转换器初始化失败: {str(e)}")
+        print("将使用区域经验N值进行转换")
+        elev_converter = ElevationConverter(region_n_value=region_n_value)
+
+    converted_towers = []
+
+    for i, tower in enumerate(pointcloud_towers):
+        try:
+            # 🔧 关键：获取tower_extraction.py输出的椭球高坐标（CGCS2000）
+            original_center = tower['center']  # [x_cgcs2000, y_cgcs2000, z_ellipsoid]
+
+            print(f"🔄 处理杆塔{i + 1}: 原始中心 {original_center}")
+
+            # 步骤1：CGCS2000坐标转换到WGS84经纬度
+            lon_wgs84, lat_wgs84 = transformer.transform(
+                original_center[0],  # X坐标 (CGCS2000)
+                original_center[1]  # Y坐标 (CGCS2000)
+            )
+
+            # 步骤2：椭球高转换为正高
+            ellipsoid_height = original_center[2]  # Z坐标就是椭球高
+            orthometric_height = elev_converter.ellipsoid_to_orthometric(
+                lat_wgs84, lon_wgs84, ellipsoid_height
+            )
+
+            # 🔧 创建包含正高的转换后坐标
+            converted_center = [lon_wgs84, lat_wgs84, orthometric_height]
+
+            # 创建转换后的杆塔信息
+            converted_tower = {
+                'id': f"PC-{i + 1}",  # 初始编号
+                'converted_center': converted_center,  # [lon_wgs84, lat_wgs84, orthometric_height]
+                'height': tower.get('height', 0),
+                'north_angle': tower.get('north_angle', 0),
+                'original_center': original_center,  # 保留原始椭球高坐标(CGCS2000)
+                # 🔧 详细的高程信息
+                'ellipsoid_height': ellipsoid_height,
+                'orthometric_height': orthometric_height,
+                'n_value': ellipsoid_height - orthometric_height,  # 计算的N值
+                'height_conversion_applied': True  # 标记已进行高程转换
+            }
+
+            converted_towers.append(converted_tower)
+
+            print(
+                f"📊 杆塔{i + 1}: 椭球高 {ellipsoid_height:.2f}m → 正高 {orthometric_height:.2f}m (N={ellipsoid_height - orthometric_height:.2f}m)")
+
+        except Exception as e:
+            print(f"⚠️ 杆塔{i + 1} 高程转换失败: {str(e)}")
+            # 转换失败时，创建备用数据（使用椭球高）
+            try:
+                lon_wgs84, lat_wgs84 = transformer.transform(
+                    tower['center'][0],
+                    tower['center'][1]
+                )
+                converted_center = [lon_wgs84, lat_wgs84, tower['center'][2]]
+
+                converted_tower = {
+                    'id': f"PC-{i + 1}",
+                    'converted_center': converted_center,
+                    'height': tower.get('height', 0),
+                    'north_angle': tower.get('north_angle', 0),
+                    'original_center': tower['center'],
+                    'ellipsoid_height': tower['center'][2],
+                    'orthometric_height': tower['center'][2],  # 转换失败时使用椭球高
+                    'n_value': 0,
+                    'height_conversion_applied': False
+                }
+                converted_towers.append(converted_tower)
+                print(f"⚠️ 杆塔{i + 1} 使用椭球高作为备选")
+            except Exception as e2:
+                print(f"❌ 杆塔{i + 1} 完全处理失败: {str(e2)}")
+                continue
+
+    print(f"✅ 点云杆塔高程转换完成，共处理 {len(converted_towers)} 个杆塔")
+
+    # 统计转换情况
+    successful_conversions = sum(1 for t in converted_towers if t['height_conversion_applied'])
+    if successful_conversions > 0:
+        n_values = [t['n_value'] for t in converted_towers if t['height_conversion_applied']]
+        avg_n_value = np.mean(n_values)
+        print(f"📊 成功转换: {successful_conversions}/{len(converted_towers)} 个杆塔")
+        print(f"📊 平均N值: {avg_n_value:.2f}m")
+
+    return converted_towers
+
+
+def match_towers(gim_list, pointcloud_towers, transformer, distance_threshold=50, height_threshold=100,
+                 region_n_value=25.0):
+    """
+    🔧 修改后的匹配函数：在匹配阶段进行椭球高到正高转换
 
     参数:
         gim_list: GIM杆塔信息列表
-        pointcloud_towers: 点云杆塔信息列表（包含转换后的坐标）
+        pointcloud_towers: 点云杆塔信息列表（tower_extraction.py的原始椭球高输出）
         transformer: 坐标转换器
         distance_threshold: 经纬度距离阈值（米）
         height_threshold: 高度差阈值（米）
+        region_n_value: 区域N值（米）
 
     返回:
-        匹配成功的行索引列表[(gim_index, pc_index)]
+        匹配成功的行索引列表[(gim_index, pc_index)]，以及转换后的点云杆塔数据
     """
+    print("🔍 开始杆塔匹配（在匹配阶段进行高程转换）...")
+
+    # 🔧 关键步骤：将点云杆塔从椭球高转换为正高
+    converted_towers = convert_pointcloud_ellipsoid_to_orthometric(pointcloud_towers, transformer, region_n_value)
+
+    print(f"🔍 开始执行匹配算法...")
     matched_rows = []
 
     for i, gim_tower in enumerate(gim_list):
-        # 获取GIM杆塔位置信息
+        # 获取GIM杆塔位置信息（假设GIM中已经是正高）
         gim_lat = gim_tower.get("lat", 0)
         gim_lon = gim_tower.get("lng", 0)
-        gim_height = gim_tower.get("h", 0)
+        gim_height = gim_tower.get("h", 0)  # GIM中的高度（正高）
 
-        # 尝试匹配点云杆塔
-        for j, pc_tower in enumerate(pointcloud_towers):
-            # 获取点云杆塔转换后的位置信息
+        print(f"🔍 匹配GIM杆塔{i + 1}: 位置({gim_lat:.6f}, {gim_lon:.6f}), 正高{gim_height:.2f}m")
+
+        # 🔧 关键：使用转换后的正高数据进行匹配
+        for j, pc_tower in enumerate(converted_towers):
+            # 获取点云杆塔转换后的位置信息（WGS84 + 正高）
             pc_lon = pc_tower['converted_center'][0]  # 经度(WGS84)
             pc_lat = pc_tower['converted_center'][1]  # 纬度(WGS84)
-            pc_height = pc_tower['converted_center'][2]  # 海拔高度
+            pc_height = pc_tower['converted_center'][2]  # 🔧 现在是正高！
 
             # 计算距离并检查是否匹配
             distance = haversine(gim_lat, gim_lon, pc_lat, pc_lon)
-            height_diff = abs(gim_height - pc_height)
+            height_diff = abs(gim_height - pc_height)  # 🔧 现在是正高与正高的比较
+
+            print(f"  📐 vs 点云杆塔{j + 1}: 距离{distance:.1f}m, 高差{height_diff:.1f}m (正高{pc_height:.2f}m)")
 
             if distance <= distance_threshold and height_diff <= height_threshold:
                 matched_rows.append((i, j))
+                print(f"  ✅ 匹配成功！GIM杆塔{i + 1} ↔ 点云杆塔{j + 1}")
                 break
 
-    return matched_rows
+    print(f"🎉 匹配完成，共找到 {len(matched_rows)} 对匹配的杆塔")
+    return matched_rows, converted_towers
 
 
 def create_tower_table(headers, data, row_count=None):
@@ -95,63 +220,66 @@ def create_tower_table(headers, data, row_count=None):
     return table
 
 
-def match_from_gim_tower_list(tower_list, pointcloud_towers):
+def match_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25.0):
     """
-    🔧 匹配功能：配对成功时，将左表的杆塔编号更新到右表中
-    - 左表(GIM数据): 保持原始数据不变
-    - 右表(点云数据): 配对成功的杆塔，编号更新为左表的杆塔编号
-    - 配对失败的右表杆塔保持原来的PC-X编号
+    🔧 修改后的匹配功能：仅在匹配阶段进行高程转换
+
+    🎯 完全兼容现有主程序调用方式：
+    widget = match_from_gim_tower_list(self.tower_list, self.tower_geometries)
     """
+    print("🚀 启动匹配功能（仅在匹配阶段转换高程）...")
+
     # 创建坐标转换器 (CGCS2000 -> WGS84)
     transformer = Transformer.from_crs("EPSG:4547", "EPSG:4326", always_xy=True)
 
-    # 准备左表数据 (GIM杆塔，保持原始数据) - 将"高度"改为"高程"
+    # 准备左表数据 (GIM杆塔，保持原始数据)
     left_data = []
     for t in tower_list:
         left_data.append([
             t.get("properties", {}).get("杆塔编号", ""),  # 杆塔编号
             f"{t.get('lat', 0):.6f}",  # 纬度
             f"{t.get('lng', 0):.6f}",  # 经度
-            f"{t.get('h', 0):.2f}",  # 高程（原来是高度）
+            f"{t.get('h', 0):.2f}",  # 高程（正高）
             f"{t.get('r', 0):.1f}"  # 方向角
         ])
 
-    # 准备右表数据 (点云杆塔，转换后坐标) - 移除"杆塔高度"列，将"海拔高度"改为"高程"
+    # 🔧 关键修改：在匹配阶段执行高程转换，使用默认区域N值
+    matched, converted_towers = match_towers(
+        tower_list, pointcloud_towers, transformer,
+        region_n_value=region_n_value  # 默认25.0米，可根据地区调整
+    )
+
+    # 准备右表数据 (点云杆塔，使用转换后的正高数据)
     right_data = []
-    converted_towers = []  # 存储转换后的点云杆塔信息
+    for converted_tower in converted_towers:
+        # 🔧 使用转换后的正高数据
+        lat = converted_tower['converted_center'][1]
+        lon = converted_tower['converted_center'][0]
+        orthometric_height = converted_tower['converted_center'][2]  # 正高
 
-    for i, tower in enumerate(pointcloud_towers):
-        # 执行坐标转换
-        lon, lat = transformer.transform(
-            tower['center'][0],
-            tower['center'][1]
-        )
-        converted_center = [lon, lat, tower['center'][2]]
+        # 🔧 修改：只显示数值，不显示高程类型标识
+        height_display = f"{orthometric_height:.2f}"
 
-        # 存储转换后的信息
-        converted_tower = {
-            'id': f"PC-{i + 1}",  # 初始编号
-            'converted_center': converted_center,
-            'height': tower.get('height', 0),
-            'north_angle': tower.get('north_angle', 0),
-            'original_center': tower['center']  # 保留原始坐标
-        }
-        converted_towers.append(converted_tower)
+        # 在日志中显示转换信息（不在界面显示）
+        if converted_tower.get('height_conversion_applied', False):
+            ellipsoid_h = converted_tower.get('ellipsoid_height', 0)
+            n_val = converted_tower.get('n_value', 0)
+            print(f"📋 杆塔显示: 椭球高{ellipsoid_h:.2f}m → 正高{orthometric_height:.2f}m (N={n_val:.2f}m)")
+        else:
+            print(f"📋 杆塔显示: {orthometric_height:.2f}m (椭球高，未转换)")
 
-        # 准备表格显示数据 - 移除了"杆塔高度"列，调换经纬度位置
         right_data.append([
-            converted_tower['id'],  # 杆塔编号（稍后可能会被更新）
+            converted_tower['id'],  # 杆塔编号
             f"{lat:.6f}",  # 纬度(WGS84)
             f"{lon:.6f}",  # 经度(WGS84)
-            f"{converted_center[2]:.2f}",  # 高程（原来是海拔高度）
+            height_display,  # 🔧 显示正高并标注
             f"{converted_tower['north_angle']:.1f}"  # 北方向偏角
         ])
 
-    # 创建左侧表格 (GIM杆塔) - 将"高度"改为"高程"
-    left_headers = ["杆塔编号", "纬度", "经度", "高程", "北方向偏角"]
+    # 创建表格
+    left_headers = ["杆塔编号", "纬度", "经度", "高程", "北方向偏角"]  # 🔧 修改：去掉"（正高）"
     table_left = create_tower_table(left_headers, left_data)
 
-    # 创建右侧表格 (点云杆塔) - 移除"杆塔高度"，将"海拔高度"改为"高程"，调换经纬度位置
     right_headers = ["杆塔编号", "纬度(WGS84)", "经度(WGS84)", "高程", "北方向偏角"]
     table_right = create_tower_table(right_headers, right_data)
 
@@ -160,17 +288,16 @@ def match_from_gim_tower_list(tower_list, pointcloud_towers):
     left_label.setAlignment(Qt.AlignCenter)
     left_label.setStyleSheet("color: red; font-weight: bold; font-size: 14px;")
 
-    right_label = QLabel("数据来源: 点云数据 (匹配模式)")
+    right_label = QLabel("数据来源: 点云数据 (匹配时正高转换)")  # 🔧 更新标签
     right_label.setAlignment(Qt.AlignCenter)
     right_label.setStyleSheet("color: red; font-weight: bold; font-size: 14px;")
 
     # 🔧 进行匹配，并将左表的杆塔编号更新到右表
-    matched = match_towers(tower_list, converted_towers, transformer)
     highlight_colors = [QColor(173, 216, 230), QColor(255, 255, 204), QColor(220, 220, 220)]
     color_index = 0
 
     for left_row, right_row in matched:
-        # 🔧 关键功能：将左表的杆塔编号更新到右表中
+        # 将左表的杆塔编号更新到右表中
         gim_tower_id = tower_list[left_row].get("properties", {}).get("杆塔编号", "")
 
         # 更新右表的杆塔编号
@@ -214,64 +341,57 @@ def match_from_gim_tower_list(tower_list, pointcloud_towers):
     return panel
 
 
-def correct_from_gim_tower_list(tower_list, pointcloud_towers):
+def correct_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25.0):
     """
-    🔧 校对功能：在匹配功能的基础上进行校对
-    1. 先执行智能匹配，确定配对关系
-    2. 只对配对成功的杆塔：将左表编号更新到右表，右表坐标更新到左表
-    - 左表(GIM数据): 杆塔编号保持不变，配对成功的坐标用点云数据校正
-    - 右表(点云数据): 只有配对成功的杆塔编号会更新为左表编号
+    🔧 修改后的校对功能：仅在校对阶段进行高程转换
+
+    🎯 完全兼容现有主程序调用方式：
+    widget = correct_from_gim_tower_list(self.tower_list, self.tower_geometries)
     """
+    print("🚀 启动校对功能（仅在校对阶段转换高程）...")
+
     # 创建坐标转换器 (CGCS2000 -> WGS84)
     transformer = Transformer.from_crs("EPSG:4547", "EPSG:4326", always_xy=True)
 
-    # 准备左表数据 (GIM杆塔，保持原始数据) - 将"高度"改为"高程"
+    # 准备左表数据 (GIM杆塔，保持原始数据)
     left_data = []
     for t in tower_list:
         left_data.append([
             t.get("properties", {}).get("杆塔编号", ""),  # 杆塔编号
             f"{t.get('lat', 0):.6f}",  # 纬度
             f"{t.get('lng', 0):.6f}",  # 经度
-            f"{t.get('h', 0):.2f}",  # 高程（原来是高度）
+            f"{t.get('h', 0):.2f}",  # 高程（正高）
             f"{t.get('r', 0):.1f}"  # 方向角
         ])
 
-    # 准备右表数据 (点云杆塔，转换后坐标) - 移除"杆塔高度"列，将"海拔高度"改为"高程"
+    # 🔧 关键修改：在校对阶段执行高程转换，使用默认区域N值
+    matched, converted_towers = match_towers(
+        tower_list, pointcloud_towers, transformer,
+        region_n_value=region_n_value  # 默认25.0米，可根据地区调整
+    )
+
+    # 准备右表数据 (点云杆塔，使用转换后的正高数据)
     right_data = []
-    converted_towers = []  # 存储转换后的点云杆塔信息
+    for converted_tower in converted_towers:
+        lat = converted_tower['converted_center'][1]
+        lon = converted_tower['converted_center'][0]
+        orthometric_height = converted_tower['converted_center'][2]  # 正高
 
-    for i, tower in enumerate(pointcloud_towers):
-        # 执行坐标转换
-        lon, lat = transformer.transform(
-            tower['center'][0],
-            tower['center'][1]
-        )
-        converted_center = [lon, lat, tower['center'][2]]
+        # 🔧 修改：只显示数值，不显示高程类型标识
+        height_display = f"{orthometric_height:.2f}"
 
-        # 存储转换后的信息
-        converted_tower = {
-            'id': f"PC-{i + 1}",  # 初始编号
-            'converted_center': converted_center,
-            'height': tower.get('height', 0),
-            'north_angle': tower.get('north_angle', 0),
-            'original_center': tower['center']  # 保留原始坐标
-        }
-        converted_towers.append(converted_tower)
-
-        # 准备表格显示数据 - 移除了"杆塔高度"列，调换经纬度位置
         right_data.append([
-            converted_tower['id'],  # 杆塔编号（只有配对成功的会被更新）
-            f"{lat:.6f}",  # 纬度(WGS84)
-            f"{lon:.6f}",  # 经度(WGS84)
-            f"{converted_center[2]:.2f}",  # 高程（原来是海拔高度）
-            f"{converted_tower['north_angle']:.1f}"  # 北方向偏角
+            converted_tower['id'],
+            f"{lat:.6f}",
+            f"{lon:.6f}",
+            height_display,
+            f"{converted_tower['north_angle']:.1f}"
         ])
 
-    # 创建左侧表格 (GIM杆塔) - 将"高度"改为"高程"
-    left_headers = ["杆塔编号", "纬度", "经度", "高程", "北方向偏角"]
+    # 创建表格
+    left_headers = ["杆塔编号", "纬度", "经度", "高程", "北方向偏角"]  # 🔧 修改：去掉"（正高）"
     table_left = create_tower_table(left_headers, left_data)
 
-    # 创建右侧表格 (点云杆塔) - 移除"杆塔高度"，将"海拔高度"改为"高程"，调换经纬度位置
     right_headers = ["杆塔编号", "纬度(WGS84)", "经度(WGS84)", "高程", "北方向偏角"]
     table_right = create_tower_table(right_headers, right_data)
 
@@ -280,20 +400,18 @@ def correct_from_gim_tower_list(tower_list, pointcloud_towers):
     left_label.setAlignment(Qt.AlignCenter)
     left_label.setStyleSheet("color: blue; font-weight: bold; font-size: 14px;")
 
-    right_label = QLabel("数据来源: 点云数据")
+    right_label = QLabel("数据来源: 点云数据 (校对时正高转换)")  # 🔧 更新标签
     right_label.setAlignment(Qt.AlignCenter)
     right_label.setStyleSheet("color: blue; font-weight: bold; font-size: 14px;")
 
-    # 🔧 关键：先执行智能匹配，确定配对关系
-    matched = match_towers(tower_list, converted_towers, transformer)
+    # 🔧 校对功能：只对配对成功的杆塔进行双向更新
     highlight_colors = [QColor(200, 255, 200), QColor(255, 230, 230), QColor(220, 220, 255)]
     color_index = 0
 
-    # 🔧 校对功能：只对配对成功的杆塔进行双向更新
     for left_row, right_row in matched:
         pc_tower = converted_towers[right_row]
 
-        # 🔧 步骤1：将左表的杆塔编号更新到右表（只有配对成功的）
+        # 步骤1：将左表的杆塔编号更新到右表（只有配对成功的）
         gim_tower_id = tower_list[left_row].get("properties", {}).get("杆塔编号", "")
         if table_right.item(right_row, 0):
             table_right.item(right_row, 0).setText(str(gim_tower_id))
@@ -301,13 +419,12 @@ def correct_from_gim_tower_list(tower_list, pointcloud_towers):
         # 同时更新converted_towers中的信息（用于后续保存）
         converted_towers[right_row]['id'] = str(gim_tower_id)
 
-        # 🔧 步骤2：将右表的坐标数据更新到左表（校对GIM数据）
-        # 保持杆塔编号不变，只更新坐标信息
+        # 🔧 步骤2：将右表的正高坐标数据更新到左表（校对GIM数据）
         if table_left.item(left_row, 1):  # 纬度
             table_left.item(left_row, 1).setText(f"{pc_tower['converted_center'][1]:.6f}")
         if table_left.item(left_row, 2):  # 经度
             table_left.item(left_row, 2).setText(f"{pc_tower['converted_center'][0]:.6f}")
-        if table_left.item(left_row, 3):  # 高程（原来是高度）
+        if table_left.item(left_row, 3):  # 高程（现在是正高）
             table_left.item(left_row, 3).setText(f"{pc_tower['converted_center'][2]:.2f}")
         if table_left.item(left_row, 4):  # 北方向偏角
             table_left.item(left_row, 4).setText(f"{pc_tower['north_angle']:.1f}")
