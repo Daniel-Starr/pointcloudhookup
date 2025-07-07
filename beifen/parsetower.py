@@ -39,14 +39,13 @@ class GIMTower:
             self.log_info(f"❌ project.cbm 解析失败: {e}", level="error")
 
     def parse_cbm(self, cbm_path, isF4=False):
-
-        if cbm_path in self.visited_cbm_set:
+        cbm_filename = os.path.basename(cbm_path)
+        if cbm_filename in self.visited_cbm_set:
             return None  # ✅ 已解析，跳过
-        self.visited_cbm_set.add(cbm_path)
+        self.visited_cbm_set.add(cbm_filename)
 
-        if cbm_path not in self.cbm_files:
-            self.cbm_files.append(cbm_path)
-
+        if cbm_filename not in self.cbm_files:
+            self.cbm_files.append(cbm_filename)
 
         node = {
             'name': '',
@@ -56,7 +55,7 @@ class GIMTower:
             'h': '',
             'r': '',
             'properties': '',
-            'cbm_path': cbm_path
+            'cbm_path': cbm_filename
         }
         try:
             with open(cbm_path, 'r', encoding='utf-8') as f:
@@ -138,8 +137,6 @@ class GIMTower:
         except Exception as e:
             self.log_info(f"❌ Excel 导出失败: {e}")
 
-
-
     def deduplicate_by_cbm_path(self, arr):
         seen = set()
         unique = []
@@ -161,5 +158,3 @@ def load_towers_from_gim_path(gim_path, log_callback=None):
     parser = GIMTower(gim_path, log_callback=log_callback)
     tower_list = parser.parse()
     return tower_list
-
-

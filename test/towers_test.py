@@ -8,6 +8,8 @@ import warnings
 import gc
 import time
 import os
+import pandas as pd  # 新增：用于保存Excel文件
+import math  # 新增：用于角度计算
 
 # 配置环境
 os.environ["OPEN3D_CPU_RENDERING"] = "false"
@@ -17,17 +19,20 @@ warnings.filterwarnings("ignore", category=UserWarning, module="trimesh")
 def extract_visualize_save_towers(
         input_las_path,
         output_las_dir="output_towers",
+        output_excel_path="towers_info.xlsx",  # 新增：Excel输出路径
         eps=3.5,  # 增大邻域半径
         min_points=50,  # 适当增加最小点数
         aspect_ratio_threshold=2.0,  # 降低高宽比要求
         min_height=15.0,
         max_width=40.0,  # 增大最大宽度
-        min_width=5, #
-
+        min_width=5,  #
 ):
     """大尺寸杆塔优化检测函数"""
     output_dir = Path(output_las_dir)
     output_dir.mkdir(exist_ok=True)
+
+    # 初始化杆塔信息列表
+    towers_info = []  # 新增：存储杆塔信息
 
     # ==================== 数据读取和预处理 ====================
     try:
@@ -110,11 +115,36 @@ def extract_visualize_save_towers(
             # 尺寸过滤条件
             height = extents[2]
             width = max(extents[0], extents[1])
-            if not (height > min_height and min_width < width < max_width and (height / width) > aspect_ratio_threshold):
+            if not (height > min_height and min_width < width < max_width and (
+                    height / width) > aspect_ratio_threshold):
                 continue
 
             # 计算正确全局坐标
             obb_center = obb.transform[:3, 3] + centroid
+
+            # 计算北方向偏角 =========================================
+            # 获取旋转矩阵
+            rotation_matrix = obb.transform[:3, :3]
+            # 提取x轴方向向量
+            x_axis = rotation_matrix[:, 0]
+            # 计算在XY平面上的投影（忽略Z分量）
+            horizontal_direction = np.array([x_axis[0], x_axis[1], 0])
+            # 归一化
+            if np.linalg.norm(horizontal_direction) > 1e-6:
+                horizontal_direction /= np.linalg.norm(horizontal_direction)
+            else:
+                horizontal_direction = np.array([1, 0, 0])  # 默认方向
+
+            # 计算与正北方向（Y轴正方向）的夹角
+            # 注意：atan2参数顺序为(y, x)，结果范围为[-pi, pi]
+            angle_rad = np.arctan2(horizontal_direction[1], horizontal_direction[0])
+            # 转换为角度（0-360度），正北为0度，顺时针增加
+            north_angle = np.degrees(angle_rad)
+            if north_angle < 0:
+                north_angle += 360
+            # 调整使正北方向为0度（原始坐标系：正东为0度，正北为90度）
+            north_angle = (90 - north_angle) % 360
+            # ======================================================
 
             # 去重检查（5米内视为重复）
             is_duplicate = False
@@ -126,7 +156,19 @@ def extract_visualize_save_towers(
                 print(f"⚠️ 跳过重复杆塔{label} (中心距: {np.linalg.norm(obb_center - existing):.1f}m)")
                 continue
 
-            # 保存杆塔信息
+            # 保存杆塔信息 ==========================================
+            tower_info = {
+                "ID": label,
+                "经度": obb_center[0],
+                "纬度": obb_center[1],
+                "海拔高度": obb_center[2],
+                "杆塔高度": height,
+                "北方向偏角": north_angle
+            }
+            towers_info.append(tower_info)
+            # ======================================================
+
+            # 保存杆塔中心位置
             tower_centers.append(obb_center)
 
             # 保存点云
@@ -143,7 +185,8 @@ def extract_visualize_save_towers(
             obb_mesh.paint_uniform_color([1, 0, 0])
             obb_list.append(obb_mesh)
 
-            print(f"✅ 杆塔{label}: {height:.1f}m高 | {width:.1f}m宽 | 中心坐标{obb_center}")
+            print(f"✅ 杆塔{label}: {height:.1f}m高 | {width:.1f}m宽 | "
+                  f"中心坐标{obb_center} | 北偏角: {north_angle:.1f}°")
 
         except Exception as e:
             print(f"⚠️ 簇{label} 处理失败: {str(e)}")
@@ -151,6 +194,18 @@ def extract_visualize_save_towers(
         finally:
             del cluster_points, cluster_pc, obb
             gc.collect()
+
+    # ==================== 保存杆塔信息到Excel ====================
+    if towers_info:
+        try:
+            df = pd.DataFrame(towers_info)
+            df.to_excel(output_excel_path, index=False)
+            print(f"\n✅ 杆塔信息已保存到: {output_excel_path}")
+            print(f"检测到杆塔数量: {len(towers_info)}个")
+        except Exception as e:
+            print(f"⚠️ 保存Excel失败: {str(e)}")
+    else:
+        print("\n⚠️ 未检测到任何杆塔，不生成Excel文件")
 
     # ==================== 可视化系统 ====================
     print("\n=== 初始化可视化 ===")
@@ -226,8 +281,9 @@ if __name__ == "__main__":
     start_time = time.time()
     try:
         extract_visualize_save_towers(
-            input_las_path="E:/pointcloudhookup/output/point_2.las",
-            output_las_dir="E:/pointcloudhookup",
+            input_las_path="E:\pointcloudhookup\output\point_2.las",
+            output_las_dir="../output_towers",
+            output_excel_path="../towers_info.xlsx",  # 新增：指定Excel输出路径
             eps=8.0,  # 根据场景调整
             min_points=80,  # 适用于密集点云
             aspect_ratio_threshold=0.8,

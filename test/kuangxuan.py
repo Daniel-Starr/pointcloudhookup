@@ -45,7 +45,7 @@ for line in input_data.split('\n'):
         })
 
 # 读取LAS点云文件
-las = laspy.read("G:\Project\pointcloudhookup\output-2.las")
+las = laspy.read("E:\pointcloudhookup002\output\point_2.las")
 points = np.vstack((las.x, las.y, las.z)).transpose()
 
 # 创建可视化对象集合
