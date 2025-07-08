@@ -220,12 +220,11 @@ def create_tower_table(headers, data, row_count=None):
     return table
 
 
+# 在 table_match_gim.py 中的修改部分
+
 def match_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25.0):
     """
-    🔧 修改后的匹配功能：仅在匹配阶段进行高程转换
-
-    🎯 完全兼容现有主程序调用方式：
-    widget = match_from_gim_tower_list(self.tower_list, self.tower_geometries)
+    🔧 修改后的匹配功能：在匹配阶段进行高程转换，并以GIM北方向偏角为准更新点云数据
     """
     print("🚀 启动匹配功能（仅在匹配阶段转换高程）...")
 
@@ -243,41 +242,34 @@ def match_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25.0
             f"{t.get('r', 0):.1f}"  # 方向角
         ])
 
-    # 🔧 关键修改：在匹配阶段执行高程转换，使用默认区域N值
+    # 🔧 关键修改：在匹配阶段执行高程转换
     matched, converted_towers = match_towers(
         tower_list, pointcloud_towers, transformer,
-        region_n_value=region_n_value  # 默认25.0米，可根据地区调整
+        region_n_value=region_n_value
     )
 
     # 准备右表数据 (点云杆塔，使用转换后的正高数据)
     right_data = []
     for converted_tower in converted_towers:
-        # 🔧 使用转换后的正高数据
         lat = converted_tower['converted_center'][1]
         lon = converted_tower['converted_center'][0]
         orthometric_height = converted_tower['converted_center'][2]  # 正高
 
-        # 🔧 修改：只显示数值，不显示高程类型标识
         height_display = f"{orthometric_height:.2f}"
 
-        # 在日志中显示转换信息（不在界面显示）
-        if converted_tower.get('height_conversion_applied', False):
-            ellipsoid_h = converted_tower.get('ellipsoid_height', 0)
-            n_val = converted_tower.get('n_value', 0)
-            print(f"📋 杆塔显示: 椭球高{ellipsoid_h:.2f}m → 正高{orthometric_height:.2f}m (N={n_val:.2f}m)")
-        else:
-            print(f"📋 杆塔显示: {orthometric_height:.2f}m (椭球高，未转换)")
+        # 🔧 新增：默认使用点云的北方向偏角，但如果匹配成功会被GIM数据覆盖
+        north_angle = converted_tower['north_angle']
 
         right_data.append([
             converted_tower['id'],  # 杆塔编号
             f"{lat:.6f}",  # 纬度(WGS84)
             f"{lon:.6f}",  # 经度(WGS84)
-            height_display,  # 🔧 显示正高并标注
-            f"{converted_tower['north_angle']:.1f}"  # 北方向偏角
+            height_display,  # 正高
+            f"{north_angle:.1f}"  # 北方向偏角
         ])
 
     # 创建表格
-    left_headers = ["杆塔编号", "纬度", "经度", "高程", "北方向偏角"]  # 🔧 修改：去掉"（正高）"
+    left_headers = ["杆塔编号", "纬度", "经度", "高程", "北方向偏角"]
     table_left = create_tower_table(left_headers, left_data)
 
     right_headers = ["杆塔编号", "纬度(WGS84)", "经度(WGS84)", "高程", "北方向偏角"]
@@ -288,24 +280,30 @@ def match_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25.0
     left_label.setAlignment(Qt.AlignCenter)
     left_label.setStyleSheet("color: red; font-weight: bold; font-size: 14px;")
 
-    right_label = QLabel("数据来源: 点云数据 (匹配时正高转换)")  # 🔧 更新标签
+    right_label = QLabel("数据来源: 点云数据 (匹配时正高转换)")
     right_label.setAlignment(Qt.AlignCenter)
     right_label.setStyleSheet("color: red; font-weight: bold; font-size: 14px;")
 
-    # 🔧 进行匹配，并将左表的杆塔编号更新到右表
+    # 🔧 进行匹配，并更新杆塔编号和北方向偏角
     highlight_colors = [QColor(173, 216, 230), QColor(255, 255, 204), QColor(220, 220, 220)]
     color_index = 0
 
     for left_row, right_row in matched:
-        # 将左表的杆塔编号更新到右表中
+        # 获取GIM杆塔的信息
         gim_tower_id = tower_list[left_row].get("properties", {}).get("杆塔编号", "")
+        gim_north_angle = tower_list[left_row].get("r", 0)  # 🔧 获取GIM的北方向偏角
 
         # 更新右表的杆塔编号
         if table_right.item(right_row, 0):
             table_right.item(right_row, 0).setText(str(gim_tower_id))
 
+        # 🔧 新增：更新右表的北方向偏角为GIM数据的值
+        if table_right.item(right_row, 4):
+            table_right.item(right_row, 4).setText(f"{gim_north_angle:.1f}")
+
         # 同时更新converted_towers中的信息（用于后续保存）
         converted_towers[right_row]['id'] = str(gim_tower_id)
+        converted_towers[right_row]['north_angle'] = gim_north_angle  # 🔧 更新北方向偏角
 
         # 高亮显示配对成功的行
         for col in range(table_left.columnCount()):
@@ -319,17 +317,14 @@ def match_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25.0
 
     # 创建面板
     panel = QWidget()
-    # 创建左侧的垂直布局 (标签 + 表格)
     left_layout = QVBoxLayout()
     left_layout.addWidget(left_label)
     left_layout.addWidget(table_left)
 
-    # 创建右侧的垂直布局 (标签 + 表格)
     right_layout = QVBoxLayout()
     right_layout.addWidget(right_label)
     right_layout.addWidget(table_right)
 
-    # 主水平布局
     main_layout = QHBoxLayout(panel)
     main_layout.addLayout(left_layout)
     main_layout.addLayout(right_layout)
@@ -343,10 +338,7 @@ def match_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25.0
 
 def correct_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25.0):
     """
-    🔧 修改后的校对功能：仅在校对阶段进行高程转换
-
-    🎯 完全兼容现有主程序调用方式：
-    widget = correct_from_gim_tower_list(self.tower_list, self.tower_geometries)
+    🔧 修改后的校对功能：在校对阶段进行高程转换，并以GIM北方向偏角为准更新点云数据
     """
     print("🚀 启动校对功能（仅在校对阶段转换高程）...")
 
@@ -364,10 +356,10 @@ def correct_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25
             f"{t.get('r', 0):.1f}"  # 方向角
         ])
 
-    # 🔧 关键修改：在校对阶段执行高程转换，使用默认区域N值
+    # 🔧 关键修改：在校对阶段执行高程转换
     matched, converted_towers = match_towers(
         tower_list, pointcloud_towers, transformer,
-        region_n_value=region_n_value  # 默认25.0米，可根据地区调整
+        region_n_value=region_n_value
     )
 
     # 准备右表数据 (点云杆塔，使用转换后的正高数据)
@@ -377,19 +369,19 @@ def correct_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25
         lon = converted_tower['converted_center'][0]
         orthometric_height = converted_tower['converted_center'][2]  # 正高
 
-        # 🔧 修改：只显示数值，不显示高程类型标识
         height_display = f"{orthometric_height:.2f}"
+        north_angle = converted_tower['north_angle']
 
         right_data.append([
             converted_tower['id'],
             f"{lat:.6f}",
             f"{lon:.6f}",
             height_display,
-            f"{converted_tower['north_angle']:.1f}"
+            f"{north_angle:.1f}"
         ])
 
     # 创建表格
-    left_headers = ["杆塔编号", "纬度", "经度", "高程", "北方向偏角"]  # 🔧 修改：去掉"（正高）"
+    left_headers = ["杆塔编号", "纬度", "经度", "高程", "北方向偏角"]
     table_left = create_tower_table(left_headers, left_data)
 
     right_headers = ["杆塔编号", "纬度(WGS84)", "经度(WGS84)", "高程", "北方向偏角"]
@@ -400,7 +392,7 @@ def correct_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25
     left_label.setAlignment(Qt.AlignCenter)
     left_label.setStyleSheet("color: blue; font-weight: bold; font-size: 14px;")
 
-    right_label = QLabel("数据来源: 点云数据 (校对时正高转换)")  # 🔧 更新标签
+    right_label = QLabel("数据来源: 点云数据 (校对时正高转换)")
     right_label.setAlignment(Qt.AlignCenter)
     right_label.setStyleSheet("color: blue; font-weight: bold; font-size: 14px;")
 
@@ -413,11 +405,18 @@ def correct_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25
 
         # 步骤1：将左表的杆塔编号更新到右表（只有配对成功的）
         gim_tower_id = tower_list[left_row].get("properties", {}).get("杆塔编号", "")
+        gim_north_angle = tower_list[left_row].get("r", 0)  # 🔧 获取GIM的北方向偏角
+
         if table_right.item(right_row, 0):
             table_right.item(right_row, 0).setText(str(gim_tower_id))
 
+        # 🔧 新增：更新右表的北方向偏角为GIM数据的值
+        if table_right.item(right_row, 4):
+            table_right.item(right_row, 4).setText(f"{gim_north_angle:.1f}")
+
         # 同时更新converted_towers中的信息（用于后续保存）
         converted_towers[right_row]['id'] = str(gim_tower_id)
+        converted_towers[right_row]['north_angle'] = gim_north_angle  # 🔧 更新北方向偏角
 
         # 🔧 步骤2：将右表的正高坐标数据更新到左表（校对GIM数据）
         if table_left.item(left_row, 1):  # 纬度
@@ -426,8 +425,12 @@ def correct_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25
             table_left.item(left_row, 2).setText(f"{pc_tower['converted_center'][0]:.6f}")
         if table_left.item(left_row, 3):  # 高程（现在是正高）
             table_left.item(left_row, 3).setText(f"{pc_tower['converted_center'][2]:.2f}")
-        if table_left.item(left_row, 4):  # 北方向偏角
-            table_left.item(left_row, 4).setText(f"{pc_tower['north_angle']:.1f}")
+
+        # 🔧 修改：左表的北方向偏角保持GIM原值不变（不更新）
+        # 原来的代码：table_left.item(left_row, 4).setText(f"{pc_tower['north_angle']:.1f}")
+        # 现在：保持GIM的北方向偏角不变
+        if table_left.item(left_row, 4):
+            table_left.item(left_row, 4).setText(f"{gim_north_angle:.1f}")
 
         # 高亮显示配对成功并已校对的行
         color = highlight_colors[color_index % len(highlight_colors)]
@@ -441,17 +444,14 @@ def correct_from_gim_tower_list(tower_list, pointcloud_towers, region_n_value=25
         color_index += 1
 
     panel = QWidget()
-    # 创建左侧的垂直布局 (标签 + 表格)
     left_layout = QVBoxLayout()
     left_layout.addWidget(left_label)
     left_layout.addWidget(table_left)
 
-    # 创建右侧的垂直布局 (标签 + 表格)
     right_layout = QVBoxLayout()
     right_layout.addWidget(right_label)
     right_layout.addWidget(table_right)
 
-    # 主水平布局
     main_layout = QHBoxLayout(panel)
     main_layout.addLayout(left_layout)
     main_layout.addLayout(right_layout)
